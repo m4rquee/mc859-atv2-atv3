@@ -18,7 +18,7 @@ link_directories($ENV{GUROBI_HOME}/lib)
 link_directories(${CMAKE_SOURCE_DIR}/lemon/lemon-1.3.1/lib)
 
 # Compiler flags
-set(CMAKE_CXX_FLAGS "-Ofast -Wall -std=c++14 -D_GLIBCXX_USE_CXX11_ABI=0 -Wunused-local-typedefs -lemon")
+# set(CMAKE_CXX_FLAGS "-Ofast -Wall -std=c++14 -D_GLIBCXX_USE_CXX11_ABI=0 -Wunused-local-typedefs -lemon")
 
 # Target executable and linking
 add_executable(mc859 src/main.cpp)
