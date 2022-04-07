@@ -81,36 +81,42 @@ void findsubtour(int n, double **sol, int *tourlenP, int *tour) {
 class SubTourElim : public GRBCallback {
 public:
   int n;
-  GRBVar **vars;
+  GRBVar **vars1, **vars2;
 
-  SubTourElim(GRBVar **xvars, int xn) : n(xn), vars(xvars) {}
+  SubTourElim(GRBVar **xvars1, GRBVar **xvars2, int xn)
+      : n(xn), vars1(xvars1), vars2(xvars2) {}
 
 protected:
+  void eliminate_min_sub_tour(GRBVar **vars) {
+    auto x = new double *[n];
+    int *tour = new int[n];
+    for (int i = 0; i < n; i++)
+      x[i] = getSolution(vars[i], n);
+
+    int len;
+    findsubtour(n, x, &len, tour);
+
+    if (len < n) {
+      // Add subtour elimination constraint:
+      GRBLinExpr expr = 0;
+      for (int i = 0; i < len; i++)
+        for (int j = i + 1; j < len; j++)
+          expr += vars[tour[i]][tour[j]];
+      addLazy(expr <= len - 1);
+    }
+
+    for (int i = 0; i < n; i++)
+      delete[] x[i];
+    delete[] x;
+    delete[] tour;
+  }
+
   void callback() override {
     try {
       if (where == GRB_CB_MIPSOL) {
         // Found an integer feasible solution - does it visit every node?
-        auto x = new double *[n];
-        int *tour = new int[n];
-        for (int i = 0; i < n; i++)
-          x[i] = getSolution(vars[i], n);
-
-        int len;
-        findsubtour(n, x, &len, tour);
-
-        if (len < n) {
-          // Add subtour elimination constraint:
-          GRBLinExpr expr = 0;
-          for (int i = 0; i < len; i++)
-            for (int j = i + 1; j < len; j++)
-              expr += vars[tour[i]][tour[j]];
-          addLazy(expr <= len - 1);
-        }
-
-        for (int i = 0; i < n; i++)
-          delete[] x[i];
-        delete[] x;
-        delete[] tour;
+        eliminate_min_sub_tour(vars1);
+        eliminate_min_sub_tour(vars2);
       }
     } catch (GRBException &e) {
       cout << "Error number: " << e.getErrorCode() << endl;
@@ -122,26 +128,27 @@ protected:
 };
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    cout << "Usage: tsp_c++ size" << endl;
+  if (argc < 3) {
+    cout << "Usage: mc859 size k" << endl;
     return 1;
   }
 
-  int n = atoi(argv[1]);
-  auto x = new double[n];
-  auto y = new double[n];
+  int n = atoi(argv[1]), k = atoi(argv[2]);
+  auto x = new double[2 * n];
+  auto y = new double[2 * n];
 
-  for (int i = 0; i < n; i++) {
+  for (int i = 0; i < 2 * n; i++) {
     x[i] = ((double)rand()) / RAND_MAX;
     y[i] = ((double)rand()) / RAND_MAX;
   }
 
-  GRBEnv *env = nullptr;
-  GRBVar **vars = nullptr;
-
-  vars = new GRBVar *[n];
-  for (int i = 0; i < n; i++)
-    vars[i] = new GRBVar[n];
+  GRBEnv *env;
+  // Costs of each edge for each salesman:
+  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n];
+  for (int i = 0; i < n; i++) {
+    X1[i] = new GRBVar[n];
+    X2[i] = new GRBVar[n];
+  }
 
   try {
     env = new GRBEnv();
@@ -153,25 +160,33 @@ int main(int argc, char *argv[]) {
     // Create binary decision variables:
     for (int i = 0; i < n; i++)
       for (int j = 0; j <= i; j++) {
-        vars[i][j] = model.addVar(0.0, 1.0, distance(x, y, i, j), GRB_BINARY,
-                                  "x_" + itos(i) + "_" + itos(j));
-        vars[j][i] = vars[i][j];
+        X1[i][j] = model.addVar(0.0, 1.0, distance(x, y, i, j), GRB_BINARY,
+                                "x1_" + itos(i) + "_" + itos(j));
+        X1[j][i] = X1[i][j];
+        X2[i][j] = model.addVar(0.0, 1.0, distance(x, y, n + i, n + j),
+                                GRB_BINARY, "x2_" + itos(i) + "_" + itos(j));
+        X2[j][i] = X2[i][j];
       }
 
     // Degree-2 constraints:
     for (int i = 0; i < n; i++) {
-      GRBLinExpr expr = 0;
-      for (int j = 0; j < n; j++)
-        expr += vars[i][j];
-      model.addConstr(expr == 2, "deg2_" + itos(i));
+      GRBLinExpr expr1 = 0, expr2 = 0;
+      for (int j = 0; j < n; j++) {
+        expr1 += X1[i][j];
+        expr2 += X2[i][j];
+      }
+      model.addConstr(expr1 == 2, "deg2_1_" + itos(i));
+      model.addConstr(expr2 == 2, "deg2_2_" + itos(i));
     }
 
     // Forbid edge from node back to itself:
-    for (int i = 0; i < n; i++)
-      vars[i][i].set(GRB_DoubleAttr_UB, 0);
+    for (int i = 0; i < n; i++) {
+      X1[i][i].set(GRB_DoubleAttr_UB, 0);
+      X2[i][i].set(GRB_DoubleAttr_UB, 0);
+    }
 
     // Set callback function:
-    SubTourElim cb = SubTourElim(vars, n);
+    SubTourElim cb = SubTourElim(X1, X2, n);
     model.setCallback(&cb);
 
     // Optimize model:
@@ -179,25 +194,38 @@ int main(int argc, char *argv[]) {
 
     // Extract solution:
     if (model.get(GRB_IntAttr_SolCount) > 0) {
-      auto sol = new double *[n];
+      auto sol1 = new double *[n], sol2 = new double *[n];
+      for (int i = 0; i < n; i++) {
+        sol1[i] = model.get(GRB_DoubleAttr_X, X1[i], n);
+        sol2[i] = model.get(GRB_DoubleAttr_X, X2[i], n);
+      }
+
+      int *tour1 = new int[n], *tour2 = new int[n];
+      int len1, len2;
+
+      findsubtour(n, sol1, &len1, tour1);
+      findsubtour(n, sol2, &len2, tour2);
+      assert(len1 == n);
+      assert(len2 == n);
+
+      cout << "Tour 1: ";
       for (int i = 0; i < n; i++)
-        sol[i] = model.get(GRB_DoubleAttr_X, vars[i], n);
-
-      int *tour = new int[n];
-      int len;
-
-      findsubtour(n, sol, &len, tour);
-      assert(len == n);
-
-      cout << "Tour: ";
-      for (int i = 0; i < len; i++)
-        cout << tour[i] << " ";
+        cout << tour1[i] << " ";
       cout << endl;
 
+      cout << "Tour 2: ";
       for (int i = 0; i < n; i++)
-        delete[] sol[i];
-      delete[] sol;
-      delete[] tour;
+        cout << tour2[i] << " ";
+      cout << endl;
+
+      for (int i = 0; i < n; i++) {
+        delete[] sol1[i];
+        delete[] sol2[i];
+      }
+      delete[] sol1;
+      delete[] sol2;
+      delete[] tour1;
+      delete[] tour2;
     }
   } catch (GRBException &e) {
     cout << "Error number: " << e.getErrorCode() << endl;
@@ -206,9 +234,12 @@ int main(int argc, char *argv[]) {
     cout << "Error during optimization" << endl;
   }
 
-  for (int i = 0; i < n; i++)
-    delete[] vars[i];
-  delete[] vars;
+  for (int i = 0; i < n; i++) {
+    delete[] X1[i];
+    delete[] X2[i];
+  }
+  delete[] X1;
+  delete[] X2;
   delete[] x;
   delete[] y;
   delete env;
