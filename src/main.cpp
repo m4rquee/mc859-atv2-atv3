@@ -21,11 +21,11 @@ string itos(int i) {
   return s.str();
 }
 
-// Euclidean distance between points 'i' and 'j'.
+// Ceil of the euclidean distance between points 'i' and 'j'.
 inline double distance(const double *x, const double *y, int i, int j) {
   double dx = x[i] - x[j];
   double dy = y[i] - y[j];
-  return sqrt(dx * dx + dy * dy);
+  return ceil(sqrt(dx * dx + dy * dy));
 }
 
 // Given an integer-feasible solution 'sol', find the smallest
@@ -127,6 +127,11 @@ protected:
   }
 };
 
+void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
+  for (int i = 0; i < n; i++)
+    cin >> x1[i] >> y1[i] >> x2[i] >> y2[i];
+}
+
 int main(int argc, char *argv[]) {
   if (argc < 3) {
     cout << "Usage: mc859 size k" << endl;
@@ -134,13 +139,9 @@ int main(int argc, char *argv[]) {
   }
 
   int n = atoi(argv[1]), k = atoi(argv[2]);
-  auto x = new double[2 * n];
-  auto y = new double[2 * n];
-
-  for (int i = 0; i < 2 * n; i++) {
-    x[i] = ((double)rand()) / RAND_MAX;
-    y[i] = ((double)rand()) / RAND_MAX;
-  }
+  auto x1 = new double[n], y1 = new double[n];
+  auto x2 = new double[n], y2 = new double[n];
+  read_data(x1, y1, x2, y2, n);
 
   GRBEnv *env;
   // Costs of each edge for each salesman:
@@ -161,11 +162,11 @@ int main(int argc, char *argv[]) {
     // Create binary decision variables:
     for (int i = 0; i < n; i++)
       for (int j = 0; j <= i; j++) {
-        X1[i][j] = model.addVar(0.0, 1.0, distance(x, y, i, j), GRB_BINARY,
+        X1[i][j] = model.addVar(0.0, 1.0, distance(x1, y1, i, j), GRB_BINARY,
                                 "x1_" + itos(i) + "_" + itos(j));
         X1[j][i] = X1[i][j];
-        X2[i][j] = model.addVar(0.0, 1.0, distance(x, y, n + i, n + j),
-                                GRB_BINARY, "x2_" + itos(i) + "_" + itos(j));
+        X2[i][j] = model.addVar(0.0, 1.0, distance(x2, y2, i, j), GRB_BINARY,
+                                "x2_" + itos(i) + "_" + itos(j));
         X2[j][i] = X2[i][j];
         d[i][j] = model.addVar(0.0, 1.0, 0, GRB_BINARY,
                                "d_" + itos(i) + "_" + itos(j));
@@ -265,8 +266,10 @@ int main(int argc, char *argv[]) {
   }
   delete[] X1;
   delete[] X2;
-  delete[] x;
-  delete[] y;
+  delete[] x1;
+  delete[] x2;
+  delete[] y1;
+  delete[] y2;
   delete env;
   return 0;
 }
