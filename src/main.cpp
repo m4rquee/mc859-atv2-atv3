@@ -144,10 +144,11 @@ int main(int argc, char *argv[]) {
 
   GRBEnv *env;
   // Costs of each edge for each salesman:
-  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n];
+  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
   for (int i = 0; i < n; i++) {
     X1[i] = new GRBVar[n];
     X2[i] = new GRBVar[n];
+    d[i] = new GRBVar[n];
   }
 
   try {
@@ -166,6 +167,9 @@ int main(int argc, char *argv[]) {
         X2[i][j] = model.addVar(0.0, 1.0, distance(x, y, n + i, n + j),
                                 GRB_BINARY, "x2_" + itos(i) + "_" + itos(j));
         X2[j][i] = X2[i][j];
+        d[i][j] = model.addVar(0.0, 1.0, 0, GRB_BINARY,
+                               "d_" + itos(i) + "_" + itos(j));
+        d[j][i] = d[i][j];
       }
 
     // Degree-2 constraints:
@@ -184,6 +188,20 @@ int main(int argc, char *argv[]) {
       X1[i][i].set(GRB_DoubleAttr_UB, 0);
       X2[i][i].set(GRB_DoubleAttr_UB, 0);
     }
+
+    // Similarity constraint between tours:
+    GRBLinExpr expr = 0;
+    for (int i = 0; i < n; i++)
+      for (int j = i + 1; j < n; j++)
+        expr += d[i][j];
+    model.addConstr(expr >= k, "similarity");
+
+    // If d_ij then both edges should be used, otherwise no restrictions are
+    // imposed:
+    for (int i = 0; i < n; i++)
+      for (int j = 0; j < n; j++)
+        model.addConstr(X1[i][j] + X2[i][j] >= 2 * d[i][j],
+                        "double_" + itos(i) + "_" + itos(j));
 
     // Set callback function:
     SubTourElim cb = SubTourElim(X1, X2, n);
@@ -216,6 +234,13 @@ int main(int argc, char *argv[]) {
       cout << "Tour 2: ";
       for (int i = 0; i < n; i++)
         cout << tour2[i] << " ";
+      cout << endl;
+
+      cout << "Shared edges:\n";
+      for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+          if (d[i][j].get(GRB_DoubleAttr_X) > 0.5)
+            cout << "(" << i << ", " << j << ") ";
       cout << endl;
 
       for (int i = 0; i < n; i++) {
