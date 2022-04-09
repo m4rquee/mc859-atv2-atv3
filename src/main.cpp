@@ -200,9 +200,12 @@ int main(int argc, char *argv[]) {
     // If d_ij then both edges should be used, otherwise no restrictions are
     // imposed:
     for (int i = 0; i < n; i++)
-      for (int j = 0; j < n; j++)
-        model.addConstr(X1[i][j] + X2[i][j] >= 2 * d[i][j],
-                        "double_" + itos(i) + "_" + itos(j));
+      for (int j = 0; j < n; j++) {
+        model.addConstr(X1[i][j] >= d[i][j],
+                        "double1_" + itos(i) + "_" + itos(j));
+        model.addConstr(X2[i][j] >= d[i][j],
+                        "double2_" + itos(i) + "_" + itos(j));
+      }
 
     // Set callback function:
     SubTourElim cb = SubTourElim(X1, X2, n);
