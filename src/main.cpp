@@ -1,11 +1,9 @@
-/* Copyright 2022, Gurobi Optimization, LLC */
-
-/* Solve a traveling salesman problem on a randomly generated set of
+/* Solve a k-similar traveling salesman problem on a set of
    points using lazy constraints. The base MIP model only includes
-   'degree-2' constraints, requiring each node to have exactly
-   two incident edges. Solutions to this model may contain subtours -
-   tours that don't visit every node. The lazy constraint callback
-   adds new constraints to cut them off. */
+   'degree-2' and similarity constraints, requiring each node to have exactly
+   two incident edges and each tour to share at least k edges. Solutions to this
+   model may contain subtours - tours that don't visit every node. The lazy
+   constraint callback adds new constraints to cut them off. */
 
 #include "gurobi_c++.h"
 #include <cassert>
@@ -30,8 +28,8 @@ inline double distance(const double *x, const double *y, int i, int j) {
 
 // Given an integer-feasible solution 'sol', find the smallest
 // sub-tour. Result is returned in 'tour', and length is
-// returned in 'tourlenP'.
-void findsubtour(int n, double **sol, int *tourlenP, int *tour) {
+// returned in 'tour_len'.
+void find_subtour(int n, double **sol, int *tour_len, int *tour) {
   bool *seen = new bool[n];
   int bestind, bestlen;
   int i, node, len, start;
@@ -70,12 +68,12 @@ void findsubtour(int n, double **sol, int *tourlenP, int *tour) {
 
   for (i = 0; i < bestlen; i++)
     tour[i] = tour[bestind + i];
-  *tourlenP = bestlen;
+  *tour_len = bestlen;
 
   delete[] seen;
 }
 
-// Subtour elimination callback.  Whenever a feasible solution is found,
+// Subtour elimination callback. Whenever a feasible solution is found,
 // find the smallest subtour, and add a subtour elimination constraint
 // if the tour doesn't visit every node.
 class SubTourElim : public GRBCallback {
@@ -94,7 +92,7 @@ protected:
       x[i] = getSolution(vars[i], n);
 
     int len;
-    findsubtour(n, x, &len, tour);
+    find_subtour(n, x, &len, tour);
 
     if (len < n) {
       // Add subtour elimination constraint:
@@ -134,7 +132,7 @@ void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    cout << "Usage: mc859 size k" << endl;
+    cout << "Usage: mc859 size k < coordinates_file" << endl;
     return 1;
   }
 
@@ -144,7 +142,8 @@ int main(int argc, char *argv[]) {
   read_data(x1, y1, x2, y2, n);
 
   GRBEnv *env;
-  // Costs of each edge for each salesman:
+  // Costs of each edge for each salesman and if an edge is required to be
+  // doubled:
   auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
   for (int i = 0; i < n; i++) {
     X1[i] = new GRBVar[n];
@@ -154,10 +153,15 @@ int main(int argc, char *argv[]) {
 
   try {
     env = new GRBEnv();
+    env->set(GRB_DoubleParam_TimeLimit, 1800);
     GRBModel model = GRBModel(*env);
 
     // Must set LazyConstraints parameter when using lazy constraints:
     model.set(GRB_IntParam_LazyConstraints, 1);
+
+    model.set(GRB_IntParam_MIPFocus, GRB_MIPFOCUS_FEASIBILITY);
+    model.set(GRB_IntParam_Cuts, GRB_CUTS_AGGRESSIVE);
+    model.set(GRB_IntParam_Presolve, GRB_PRESOLVE_AGGRESSIVE);
 
     // Create binary decision variables:
     for (int i = 0; i < n; i++)
@@ -225,8 +229,8 @@ int main(int argc, char *argv[]) {
       int *tour1 = new int[n], *tour2 = new int[n];
       int len1, len2;
 
-      findsubtour(n, sol1, &len1, tour1);
-      findsubtour(n, sol2, &len2, tour2);
+      find_subtour(n, sol1, &len1, tour1);
+      find_subtour(n, sol2, &len2, tour2);
       assert(len1 == n);
       assert(len2 == n);
 
