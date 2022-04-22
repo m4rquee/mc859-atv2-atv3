@@ -130,30 +130,15 @@ void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
     cin >> x1[i] >> y1[i] >> x2[i] >> y2[i];
 }
 
-int main(int argc, char *argv[]) {
-  if (argc < 3) {
-    cout << "Usage: mc859 size k < coordinates_file" << endl;
-    return 1;
-  }
-
-  int n = atoi(argv[1]), k = atoi(argv[2]);
+GRBModel create_gurobi_LLBP_model(GRBEnv **env, GRBVar **X1, GRBVar **X2,
+                                  GRBVar **d, int n, int k, double *lambda) {
   auto x1 = new double[n], y1 = new double[n];
   auto x2 = new double[n], y2 = new double[n];
   read_data(x1, y1, x2, y2, n);
 
-  GRBEnv *env;
-  // Costs of each edge for each salesman and if an edge is required to be
-  // doubled:
-  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
-  for (int i = 0; i < n; i++) {
-    X1[i] = new GRBVar[n];
-    X2[i] = new GRBVar[n];
-    d[i] = new GRBVar[n];
-  }
-
   try {
-    env = new GRBEnv();
-    env->set(GRB_DoubleParam_TimeLimit, 1800);
+    *env = new GRBEnv();
+    (*env)->set(GRB_DoubleParam_TimeLimit, 1800);
     GRBModel model = GRBModel(*env);
 
     // Must set LazyConstraints parameter when using lazy constraints:
@@ -172,7 +157,8 @@ int main(int argc, char *argv[]) {
         X2[i][j] = model.addVar(0.0, 1.0, distance(x2, y2, i, j), GRB_BINARY,
                                 "x2_" + itos(i) + "_" + itos(j));
         X2[j][i] = X2[i][j];
-        d[i][j] = model.addVar(0.0, 1.0, 0, GRB_BINARY,
+        // The -lambda[0] obj is because of the dualized similarity constraint:
+        d[i][j] = model.addVar(0.0, 1.0, -lambda[0], GRB_BINARY,
                                "d_" + itos(i) + "_" + itos(j));
         d[j][i] = d[i][j];
       }
@@ -194,13 +180,7 @@ int main(int argc, char *argv[]) {
       X2[i][i].set(GRB_DoubleAttr_UB, 0);
     }
 
-    // Similarity constraint between tours:
     GRBLinExpr expr = 0;
-    for (int i = 0; i < n; i++)
-      for (int j = i + 1; j < n; j++)
-        expr += d[i][j];
-    model.addConstr(expr >= k, "similarity");
-
     // If d_ij then both edges should be used, otherwise no restrictions are
     // imposed:
     for (int i = 0; i < n; i++)
@@ -215,9 +195,84 @@ int main(int argc, char *argv[]) {
     SubTourElim cb = SubTourElim(X1, X2, n);
     model.setCallback(&cb);
 
-    // Optimize model:
-    model.optimize();
+    delete[] x1;
+    delete[] x2;
+    delete[] y1;
+    delete[] y2;
+    return model;
+  } catch (GRBException &e) {
+    cout << "Error number: " << e.getErrorCode() << endl;
+    cout << e.getMessage() << endl;
+    exit(1);
+  }
+}
 
+void subgradient_method(int n, int k) {
+  // The similarity constraint will be dualized:
+  int n_duals = 1;
+  auto lambda = new double[n_duals], g_k = new double[n_duals];
+  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB = 1E6;
+
+  // Initialize the Lagrangian multipliers lambda:
+  for (int i = 0; i < n_duals; i++)
+    lambda[i] = 0;
+
+  GRBEnv *env;
+  // Costs of each edge for each salesman and if an edge is required to be
+  // doubled:
+  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
+  for (int i = 0; i < n; i++) {
+    X1[i] = new GRBVar[n];
+    X2[i] = new GRBVar[n];
+    d[i] = new GRBVar[n];
+  }
+
+  try {
+    // Create the gurobi model used to solve the LLBP relaxations:
+    GRBModel model = create_gurobi_LLBP_model(&env, X1, X2, d, n, k, lambda);
+    model.optimize(); // solve the LLBP
+    // lambda[0] * k is a constant for fixed lambda:
+    Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
+
+    // Compute the subgradients:
+    for (int i = 0; i < n_duals; i++) {
+      g_k[i] = k;
+      for (int u = 0; u < n; u++)
+        for (int v = u + 1; v < n; v++) {
+          g_k[i] -= d[u][v].get(GRB_DoubleAttr_X);
+        }
+      g_k_srq_sum += g_k[i] * g_k[i];
+    }
+
+    // Update the lagrangian multipliers:
+    auto alpha_k = pi_k * (Z_UB - Z_LB_k) / g_k_srq_sum;
+    for (int i = 0; i < n_duals; i++)
+      lambda[i] = std::max(0.0, lambda[i] + alpha_k * g_k[i]);
+  } catch (GRBException &e) {
+    cout << "Error number: " << e.getErrorCode() << endl;
+    cout << e.getMessage() << endl;
+  } catch (...) {
+    cout << "Error during callback" << endl;
+  }
+  for (int i = 0; i < n; i++) {
+    delete[] X1[i];
+    delete[] X2[i];
+  }
+  delete[] X1;
+  delete[] X2;
+  delete env;
+  delete[] lambda;
+  delete[] g_k;
+}
+
+int main(int argc, char *argv[]) {
+  if (argc < 3) {
+    cout << "Usage: mc859 size k < coordinates_file" << endl;
+    return 1;
+  }
+  subgradient_method(atoi(argv[1]), atoi(argv[2]));
+
+  /*try {
     // Extract solution:
     if (model.get(GRB_IntAttr_SolCount) > 0) {
       auto sol1 = new double *[n], sol2 = new double *[n];
@@ -265,18 +320,7 @@ int main(int argc, char *argv[]) {
     cout << e.getMessage() << endl;
   } catch (...) {
     cout << "Error during optimization" << endl;
-  }
+  }*/
 
-  for (int i = 0; i < n; i++) {
-    delete[] X1[i];
-    delete[] X2[i];
-  }
-  delete[] X1;
-  delete[] X2;
-  delete[] x1;
-  delete[] x2;
-  delete[] y1;
-  delete[] y2;
-  delete env;
   return 0;
 }
