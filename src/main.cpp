@@ -6,7 +6,6 @@
    constraint callback adds new constraints to cut them off. */
 
 #include "gurobi_c++.h"
-#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <sstream>
@@ -130,20 +129,43 @@ void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
     cin >> x1[i] >> y1[i] >> x2[i] >> y2[i];
 }
 
-GRBModel create_gurobi_LLBP_model(GRBEnv **env, GRBVar **X1, GRBVar **X2,
-                                  GRBVar **d, int n, int k, double *lambda) {
+void subgradient_method(int n, int k) {
+  // Read the points coordinates data: -----------------------------------------
   auto x1 = new double[n], y1 = new double[n];
   auto x2 = new double[n], y2 = new double[n];
   read_data(x1, y1, x2, y2, n);
 
+  // The similarity constraint will be dualized: -------------------------------
+  int n_duals = 1;
+  auto lambda = new double[n_duals], g_k = new double[n_duals];
+  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB = 1E6;
+
+  // Initialize the Lagrangian multipliers lambda:
+  for (int i = 0; i < n_duals; i++)
+    lambda[i] = 0;
+
+  // Costs of each edge for each salesman and if an edge is required to be
+  // doubled: ------------------------------------------------------------------
+  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
+  for (int i = 0; i < n; i++) {
+    X1[i] = new GRBVar[n];
+    X2[i] = new GRBVar[n];
+    d[i] = new GRBVar[n];
+  }
+
   try {
-    *env = new GRBEnv();
-    (*env)->set(GRB_DoubleParam_TimeLimit, 1800);
+    // Create the gurobi model used to solve the LLBP relaxations: -------------
+    auto *env = new GRBEnv();
+    env->set(GRB_DoubleParam_TimeLimit, 1800);
+
     GRBModel model = GRBModel(*env);
+    model.set(GRB_StringAttr_ModelName, "Atividade 3");
+    model.set(GRB_IntAttr_ModelSense, GRB_MINIMIZE);
 
     // Must set LazyConstraints parameter when using lazy constraints:
     model.set(GRB_IntParam_LazyConstraints, 1);
 
+    // Focus primarily on feasibility of the relaxation:
     model.set(GRB_IntParam_MIPFocus, GRB_MIPFOCUS_FEASIBILITY);
     model.set(GRB_IntParam_Cuts, GRB_CUTS_AGGRESSIVE);
     model.set(GRB_IntParam_Presolve, GRB_PRESOLVE_AGGRESSIVE);
@@ -162,6 +184,7 @@ GRBModel create_gurobi_LLBP_model(GRBEnv **env, GRBVar **X1, GRBVar **X2,
                                "d_" + itos(i) + "_" + itos(j));
         d[j][i] = d[i][j];
       }
+    model.update(); // run update to use model inserted variables
 
     // Degree-2 constraints:
     for (int i = 0; i < n; i++) {
@@ -195,41 +218,7 @@ GRBModel create_gurobi_LLBP_model(GRBEnv **env, GRBVar **X1, GRBVar **X2,
     SubTourElim cb = SubTourElim(X1, X2, n);
     model.setCallback(&cb);
 
-    delete[] x1;
-    delete[] x2;
-    delete[] y1;
-    delete[] y2;
-    return model;
-  } catch (GRBException &e) {
-    cout << "Error number: " << e.getErrorCode() << endl;
-    cout << e.getMessage() << endl;
-    exit(1);
-  }
-}
-
-void subgradient_method(int n, int k) {
-  // The similarity constraint will be dualized:
-  int n_duals = 1;
-  auto lambda = new double[n_duals], g_k = new double[n_duals];
-  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB = 1E6;
-
-  // Initialize the Lagrangian multipliers lambda:
-  for (int i = 0; i < n_duals; i++)
-    lambda[i] = 0;
-
-  GRBEnv *env;
-  // Costs of each edge for each salesman and if an edge is required to be
-  // doubled:
-  auto X1 = new GRBVar *[n], X2 = new GRBVar *[n], d = new GRBVar *[n];
-  for (int i = 0; i < n; i++) {
-    X1[i] = new GRBVar[n];
-    X2[i] = new GRBVar[n];
-    d[i] = new GRBVar[n];
-  }
-
-  try {
-    // Create the gurobi model used to solve the LLBP relaxations:
-    GRBModel model = create_gurobi_LLBP_model(&env, X1, X2, d, n, k, lambda);
+    // Solve the LLBP and advance one step of the subgradients method: ---------
     model.optimize(); // solve the LLBP
     // lambda[0] * k is a constant for fixed lambda:
     Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
@@ -238,9 +227,8 @@ void subgradient_method(int n, int k) {
     for (int i = 0; i < n_duals; i++) {
       g_k[i] = k;
       for (int u = 0; u < n; u++)
-        for (int v = u + 1; v < n; v++) {
+        for (int v = u + 1; v < n; v++)
           g_k[i] -= d[u][v].get(GRB_DoubleAttr_X);
-        }
       g_k_srq_sum += g_k[i] * g_k[i];
     }
 
@@ -260,7 +248,10 @@ void subgradient_method(int n, int k) {
   }
   delete[] X1;
   delete[] X2;
-  delete env;
+  delete[] x1;
+  delete[] x2;
+  delete[] y1;
+  delete[] y2;
   delete[] lambda;
   delete[] g_k;
 }
