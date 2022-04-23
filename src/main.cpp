@@ -153,10 +153,11 @@ void subgradient_method(int n, int k) {
     d[i] = new GRBVar[n];
   }
 
+  double remaining_time = 1800;
   try {
     // Create the gurobi model used to solve the LLBP relaxations: -------------
     auto *env = new GRBEnv();
-    env->set(GRB_DoubleParam_TimeLimit, 1800);
+    env->set(GRB_DoubleParam_TimeLimit, remaining_time);
 
     GRBModel model = GRBModel(*env);
     model.set(GRB_StringAttr_ModelName, "Atividade 3");
@@ -237,6 +238,8 @@ void subgradient_method(int n, int k) {
           d[i][j].set(GRB_DoubleAttr_Obj, -lambda[0]);
 
       // Solve the LLBP and advance one step of the subgradients method: -------
+      remaining_time -= model.get(GRB_DoubleAttr_Runtime);
+      env->set(GRB_DoubleParam_TimeLimit, remaining_time);
       model.optimize(); // solve the LLBP
       // lambda[0] * k is a constant for fixed lambda:
       Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
