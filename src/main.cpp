@@ -138,7 +138,7 @@ void subgradient_method(int n, int k) {
   // The similarity constraint will be dualized: -------------------------------
   int n_duals = 1;
   auto lambda = new double[n_duals], g_k = new double[n_duals];
-  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB = 1E6;
+  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB, eps = 1E-2;
 
   // Initialize the Lagrangian multipliers lambda:
   for (int i = 0; i < n_duals; i++)
@@ -179,12 +179,18 @@ void subgradient_method(int n, int k) {
         X2[i][j] = model.addVar(0.0, 1.0, distance(x2, y2, i, j), GRB_BINARY,
                                 "x2_" + itos(i) + "_" + itos(j));
         X2[j][i] = X2[i][j];
-        // The -lambda[0] obj is because of the dualized similarity constraint:
-        d[i][j] = model.addVar(0.0, 1.0, -lambda[0], GRB_BINARY,
+        d[i][j] = model.addVar(0.0, 1.0, 0, GRB_BINARY,
                                "d_" + itos(i) + "_" + itos(j));
         d[j][i] = d[i][j];
       }
     model.update(); // run update to use model inserted variables
+
+    // Similarity constraint between tours (1st constraint):
+    GRBLinExpr expr = 0;
+    for (int i = 0; i < n; i++)
+      for (int j = i + 1; j < n; j++)
+        expr += d[i][j];
+    model.addConstr(expr == n, "similarity");
 
     // Degree-2 constraints:
     for (int i = 0; i < n; i++) {
@@ -201,9 +207,9 @@ void subgradient_method(int n, int k) {
     for (int i = 0; i < n; i++) {
       X1[i][i].set(GRB_DoubleAttr_UB, 0);
       X2[i][i].set(GRB_DoubleAttr_UB, 0);
+      d[i][i].set(GRB_DoubleAttr_UB, 0);
     }
 
-    GRBLinExpr expr = 0;
     // If d_ij then both edges should be used, otherwise no restrictions are
     // imposed:
     for (int i = 0; i < n; i++)
@@ -218,24 +224,44 @@ void subgradient_method(int n, int k) {
     SubTourElim cb = SubTourElim(X1, X2, n);
     model.setCallback(&cb);
 
-    // Solve the LLBP and advance one step of the subgradients method: ---------
-    model.optimize(); // solve the LLBP
-    // lambda[0] * k is a constant for fixed lambda:
-    Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
+    // Solve first with k = |V| = n to get an UB: ------------------------------
+    model.optimize();
+    Z_UB = model.getObjective().getValue();
+    model.remove(model.getConstrs()[0]); // the 1st constraint (similarity)
+    model.update();
 
-    // Compute the subgradients:
-    for (int i = 0; i < n_duals; i++) {
-      g_k[i] = k;
-      for (int u = 0; u < n; u++)
-        for (int v = u + 1; v < n; v++)
-          g_k[i] -= d[u][v].get(GRB_DoubleAttr_X);
-      g_k_srq_sum += g_k[i] * g_k[i];
+    for (int iter = 0; iter < 1000; iter++) {
+      // The -lambda[0] obj is because of the dualized similarity constraint:
+      for (int i = 0; i < n; i++)
+        for (int j = 0; j <= i; j++)
+          d[i][j].set(GRB_DoubleAttr_Obj, -lambda[0]);
+
+      // Solve the LLBP and advance one step of the subgradients method: -------
+      model.optimize(); // solve the LLBP
+      // lambda[0] * k is a constant for fixed lambda:
+      Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
+
+      // Compute the subgradients:
+      for (int i = 0; i < n_duals; i++) {
+        g_k[i] = k;
+        for (int u = 0; u < n; u++)
+          for (int v = u + 1; v < n; v++)
+            g_k[i] -= d[u][v].get(GRB_DoubleAttr_X);
+        g_k_srq_sum += g_k[i] * g_k[i];
+      }
+
+      // Update the lagrangian multipliers:
+      auto alpha_k = pi_k * (Z_UB - Z_LB_k) / g_k_srq_sum;
+      for (int i = 0; i < n_duals; i++)
+        lambda[i] = std::max(0.0, lambda[i] + alpha_k * g_k[i]);
+
+      pi_k *= 0.9; // decrease the pi value to guarantee convergence
+      cout << "\niter = " << iter << "; lambda = " << lambda[0]
+           << "; alpha = " << alpha_k << "; LB = " << Z_LB_k
+           << "; UB = " << Z_UB << "\n\n";
+      if (pi_k < eps)
+        break;
     }
-
-    // Update the lagrangian multipliers:
-    auto alpha_k = pi_k * (Z_UB - Z_LB_k) / g_k_srq_sum;
-    for (int i = 0; i < n_duals; i++)
-      lambda[i] = std::max(0.0, lambda[i] + alpha_k * g_k[i]);
   } catch (GRBException &e) {
     cout << "Error number: " << e.getErrorCode() << endl;
     cout << e.getMessage() << endl;
