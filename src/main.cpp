@@ -239,6 +239,8 @@ void subgradient_method(int n, int k) {
 
       // Solve the LLBP and advance one step of the subgradients method: -------
       remaining_time -= model.get(GRB_DoubleAttr_Runtime);
+      if (remaining_time <= 0)
+        break;
       env->set(GRB_DoubleParam_TimeLimit, remaining_time);
       model.optimize(); // solve the LLBP
       // lambda[0] * k is a constant for fixed lambda:
