@@ -78,15 +78,18 @@ void find_subtour(int n, double **sol, int *tour_len, int *tour) {
 class SubTourElim : public GRBCallback {
 public:
   int n, k;
-  GRBVar **X1, **X2, **d;
+  GRBVar **X1, **X2, **D;
+  double **x1, **x2, **d;
+  int *tour1, *tour2;
 
   SubTourElim(GRBVar **xX1, GRBVar **xX2, GRBVar **xd, int xn, int xk)
-      : n(xn), k(xk), X1(xX1), X2(xX2), d(xd) {}
+      : n(xn), k(xk), X1(xX1), X2(xX2), D(xd) {
+    x1 = new double *[n], x2 = new double *[n];
+    tour1 = new int[n], tour2 = new int[n];
+  }
 
 protected:
-  bool eliminate_min_sub_tour(GRBVar **vars, int *tour) {
-    auto x = new double *[n];
-
+  bool eliminate_min_sub_tour(GRBVar **vars, double **x, int *tour) {
     for (int i = 0; i < n; i++)
       x[i] = getSolution(vars[i], n);
 
@@ -106,32 +109,36 @@ protected:
 
     for (int i = 0; i < n; i++)
       delete[] x[i];
-    delete[] x;
     return eliminated;
+  }
+
+  int similarity() {
+    int num_shared = 0;
+    for (int i = 0; i < n; i++)
+      d[i] = getSolution(D[i], n);
+    for (int i = 0; i < n; i++)
+      for (int j = i + 1; j < n; j++)
+        if (d[i][j] > 0.5)
+          num_shared++;
+    for (int i = 0; i < n; i++)
+      delete[] d[i];
+    return num_shared;
   }
 
   void callback() override {
     try {
       if (where == GRB_CB_MIPSOL) {
         // Found an integer feasible solution - does it visit every node?
-        int *tour1 = new int[n], *tour2 = new int[n];
-        bool eliminated = eliminate_min_sub_tour(X1, tour1);
-        eliminated |= eliminate_min_sub_tour(X2, tour2);
+        bool eliminated = eliminate_min_sub_tour(X1, x1, tour1);
+        eliminated |= eliminate_min_sub_tour(X2, x2, tour2);
 
         if (!eliminated) { // found an upper bound to the IP model
-          int num_shared = 0;
-          for (int i = 0; i < n; i++)
-            for (int j = i + 1; j < n; j++)
-              if (d[i][j].get(GRB_DoubleAttr_X) > 0.5)
-                num_shared++;
-
+          int num_shared = similarity();
           if (num_shared < k) // does this solution violates the similarity?
             // Fix the similarity violation and generates a new valid solution
             // to the non-relaxed IP model:
-            lagrangian_heuristic(tour1, tour2);
+            lagrangian_heuristic(k - num_shared);
         }
-        delete[] tour1;
-        delete[] tour2;
       }
     } catch (GRBException &e) {
       cout << "Error number: " << e.getErrorCode() << endl;
@@ -141,7 +148,59 @@ protected:
     }
   }
 
-  void lagrangian_heuristic(int *tour1, int *tour2) {}
+  inline int similarity_delta(int u, int v, int s, int t) const {
+    return 1 + (x1[s][t] > 0.5) - (x1[u][s] > 0.5) - (x1[v][t] > 0.5);
+  }
+
+  void flip(int u, int u_pos, int v, int v_pos, int s, int t) const {
+    // Flip the edges:
+    x1[u][v] = x1[s][t] = 1;
+    x1[u][s] = x1[v][t] = 0;
+    // Reorder the tour:
+    int lower = min(u_pos, v_pos), upper = max(u_pos, v_pos), aux;
+    for (; lower < upper; lower++, upper--)
+      aux = tour2[lower], tour2[lower] = tour2[upper], tour2[upper] = aux;
+  }
+
+  inline void get_endpoint_neighbors(int u, int v, int &u_l, int &u_r, int &v_l,
+                                     int &v_r, int &u_pos, int &v_pos) const {
+    for (int i = 0; i < n; i++)
+      if (tour2[i] == u) { // found an end point of uv
+        u_l = tour2[(i - 1) % n], u_r = tour2[(i + 1) % n];
+        u_pos = i;
+      } else if (tour2[i] == v) {
+        v_l = tour2[(i + 1) % n], v_r = tour2[(i - 1) % n];
+        v_pos = i;
+      }
+  }
+
+  void lagrangian_heuristic(int missing_k) {
+    int u, u_pos, v, v_pos, s, t;
+    while (missing_k > 0) {
+      for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+          if (x1[i][j] > 0.5 && x2[i][j] <= 0.5) {
+            int delta, i_pos, j_pos, i_l, i_r, j_l, j_r;
+            get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r, i_pos, j_pos);
+            if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
+              flip(i, i_pos, j, j_pos, i_l, j_r);
+              missing_k--; // increased the similarity by an edge pair flip
+            } else if (delta >= 0)
+              u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_l,
+              t = j_r; // found at least a similarity keeping edge pair
+
+            if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
+              flip(i, i_pos, j, j_pos, i_r, j_l);
+              missing_k--; // increased the similarity by an edge pair flip
+            } else if (delta >= 0)
+              u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_r,
+              t = j_l; // found at least a similarity keeping edge pair
+          }
+
+      // Will make a similarity increasing pair appear:
+      flip(u, u_pos, v, v_pos, s, t);
+    }
+  }
 };
 
 void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
