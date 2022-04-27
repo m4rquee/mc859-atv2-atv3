@@ -77,22 +77,23 @@ void find_subtour(int n, double **sol, int *tour_len, int *tour) {
 // if the tour doesn't visit every node.
 class SubTourElim : public GRBCallback {
 public:
-  int n;
-  GRBVar **vars1, **vars2;
+  int n, k;
+  GRBVar **X1, **X2, **d;
 
-  SubTourElim(GRBVar **xvars1, GRBVar **xvars2, int xn)
-      : n(xn), vars1(xvars1), vars2(xvars2) {}
+  SubTourElim(GRBVar **xX1, GRBVar **xX2, GRBVar **xd, int xn, int xk)
+      : n(xn), k(xk), X1(xX1), X2(xX2), d(xd) {}
 
 protected:
-  void eliminate_min_sub_tour(GRBVar **vars) {
+  bool eliminate_min_sub_tour(GRBVar **vars, int *tour) {
     auto x = new double *[n];
-    int *tour = new int[n];
+
     for (int i = 0; i < n; i++)
       x[i] = getSolution(vars[i], n);
 
     int len;
     find_subtour(n, x, &len, tour);
 
+    bool eliminated = false;
     if (len < n) {
       // Add subtour elimination constraint:
       GRBLinExpr expr = 0;
@@ -100,20 +101,37 @@ protected:
         for (int j = i + 1; j < len; j++)
           expr += vars[tour[i]][tour[j]];
       addLazy(expr <= len - 1);
+      eliminated = true;
     }
 
     for (int i = 0; i < n; i++)
       delete[] x[i];
     delete[] x;
-    delete[] tour;
+    return eliminated;
   }
 
   void callback() override {
     try {
       if (where == GRB_CB_MIPSOL) {
         // Found an integer feasible solution - does it visit every node?
-        eliminate_min_sub_tour(vars1);
-        eliminate_min_sub_tour(vars2);
+        int *tour1 = new int[n], *tour2 = new int[n];
+        bool eliminated = eliminate_min_sub_tour(X1, tour1);
+        eliminated |= eliminate_min_sub_tour(X2, tour2);
+
+        if (!eliminated) { // found an upper bound to the IP model
+          int num_shared = 0;
+          for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++)
+              if (d[i][j].get(GRB_DoubleAttr_X) > 0.5)
+                num_shared++;
+
+          if (num_shared < k) // does this solution violates the similarity?
+            // Fix the similarity violation and generates a new valid solution
+            // to the non-relaxed IP model:
+            lagrangian_heuristic(tour1, tour2);
+        }
+        delete[] tour1;
+        delete[] tour2;
       }
     } catch (GRBException &e) {
       cout << "Error number: " << e.getErrorCode() << endl;
@@ -122,6 +140,8 @@ protected:
       cout << "Error during callback" << endl;
     }
   }
+
+  void lagrangian_heuristic(int *tour1, int *tour2) {}
 };
 
 void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
@@ -222,7 +242,7 @@ void subgradient_method(int n, int k) {
       }
 
     // Set callback function:
-    SubTourElim cb = SubTourElim(X1, X2, n);
+    SubTourElim cb = SubTourElim(X1, X2, d, n, k);
     model.setCallback(&cb);
 
     // Solve first with k = |V| = n to get an UB: ------------------------------
