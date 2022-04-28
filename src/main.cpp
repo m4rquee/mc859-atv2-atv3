@@ -252,6 +252,16 @@ void read_data(double *x1, double *y1, double *x2, double *y2, int n) {
     cin >> x1[i] >> y1[i] >> x2[i] >> y2[i];
 }
 
+double starting_UB(GRBVar **X1, GRBVar **X2, int n) {
+  double UB = 0;
+  for (int i = 0; i < n - 1; i++)
+    UB += X1[i][i + 1].get(GRB_DoubleAttr_Obj) +
+          X2[i][i + 1].get(GRB_DoubleAttr_Obj);
+  UB += X1[0][n - 1].get(GRB_DoubleAttr_Obj) +
+        X2[0][n - 1].get(GRB_DoubleAttr_Obj);
+  return UB;
+}
+
 void subgradient_method(int n, int k) {
   // Read the points coordinates data: -----------------------------------------
   auto x1 = new double[n], y1 = new double[n];
@@ -309,6 +319,9 @@ void subgradient_method(int n, int k) {
       }
     model.update(); // run update to use model inserted variables
 
+    Z_UB = starting_UB(X1, X2, n);
+    env->set(GRB_DoubleParam_Cutoff, Z_UB); // set the know UB
+
     // Similarity constraint between tours (1st constraint):
     // The first run will not dualize any constraint in order to stability a
     // feasible UB.
@@ -352,7 +365,7 @@ void subgradient_method(int n, int k) {
 
     // Solve first with k = |V| = n to get an UB: ------------------------------
     model.optimize();
-    Z_UB = model.getObjective().getValue();
+    Z_UB = min(Z_UB, model.getObjective().getValue());
     model.remove(model.getConstrs()[0]); // the 1st constraint (similarity)
     model.update();
 
