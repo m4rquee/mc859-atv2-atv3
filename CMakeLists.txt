@@ -26,5 +26,6 @@ target_link_libraries(mc859 m)
 target_link_libraries(mc859 m gurobi_c++ gurobi95)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message("Running in debug mode")
     set_target_properties(mc859 PROPERTIES COMPILE_FLAGS -DDEBUG_MODE)
 endif()

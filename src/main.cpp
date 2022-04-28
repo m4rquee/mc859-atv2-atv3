@@ -162,7 +162,7 @@ protected:
                 UB += X2[i][j].get(GRB_DoubleAttr_Obj);
             }
           if (UB < best_UB)
-            cout << "New UB for the original model found: " << UB << "\n\n";
+            cout << "\n→ New UB for the original model found: " << UB << "\n\n";
           best_UB = min(best_UB, UB);
         }
 
@@ -373,7 +373,7 @@ void subgradient_method(int n, int k) {
       Z_UB = min(Z_UB, cb.best_UB);
 
       if (Z_LB_k >= Z_UB) {
-        cout << "\nFound an optimal solution of cost = " << Z_UB << "\n\n";
+        cout << "\n→ Found an optimal solution of cost = " << Z_UB << "\n\n";
         break;
       }
 
@@ -392,7 +392,7 @@ void subgradient_method(int n, int k) {
         lambda[i] = max(0.0, lambda[i] + alpha_k * g_k[i]);
 
       pi_k *= 0.9; // decrease the pi value to guarantee convergence
-      cout << "\niter = " << iter << "; lambda = " << lambda[0]
+      cout << "\n→ iter = " << iter + 1 << "; lambda = " << lambda[0]
            << "; alpha = " << alpha_k << "; LB = " << Z_LB_k
            << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
            << "%\n\n";
