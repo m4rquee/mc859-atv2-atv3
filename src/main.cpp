@@ -78,13 +78,13 @@ void find_subtour(int n, double **sol, int *tour_len, int *tour) {
 class SubTourElim : public GRBCallback {
 public:
   int n, k;
-  GRBVar **X1, **X2, **D;
-  double **x1, **x2, **d;
+  GRBVar **X1, **X2;
+  double **x1, **x2;
   int *tour1, *tour2;
 
-  SubTourElim(GRBVar **xX1, GRBVar **xX2, GRBVar **xd, int xn, int xk)
-      : n(xn), k(xk), X1(xX1), X2(xX2), D(xd) {
-    x1 = new double *[n], x2 = new double *[n], d = new double *[n];
+  SubTourElim(GRBVar **xX1, GRBVar **xX2, int xn, int xk)
+      : n(xn), k(xk), X1(xX1), X2(xX2) {
+    x1 = new double *[n], x2 = new double *[n];
     tour1 = new int[n], tour2 = new int[n];
   }
 
@@ -107,22 +107,24 @@ protected:
       eliminated = true;
     }
 
-    for (int i = 0; i < n; i++)
-      delete[] x[i];
     return eliminated;
   }
 
   int similarity() {
     int num_shared = 0;
     for (int i = 0; i < n; i++)
-      d[i] = getSolution(D[i], n);
-    for (int i = 0; i < n; i++)
       for (int j = i + 1; j < n; j++)
-        if (d[i][j] > 0.5)
-          num_shared++;
-    for (int i = 0; i < n; i++)
-      delete[] d[i];
+        num_shared += x1[i][j] > 0.5 && x2[i][j] > 0.5;
     return num_shared;
+  }
+
+  void print_edges(double **x) {
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++)
+        cout << (x[i][j] > 0.5);
+      cout << "\n";
+    }
+    cout << "\n";
   }
 
   void callback() override {
@@ -131,6 +133,8 @@ protected:
         // Found an integer feasible solution - does it visit every node?
         bool eliminated = eliminate_min_sub_tour(X1, x1, tour1);
         eliminated |= eliminate_min_sub_tour(X2, x2, tour2);
+        // print_edges(x1);
+        // print_edges(x2);
 
         if (!eliminated) { // found an upper bound to the IP model
           // Fix the similarity violation and generates a new valid solution
@@ -139,6 +143,12 @@ protected:
           while (missing_k > 0)
             lagrangian_heuristic(missing_k);
         }
+
+        // Cleanup the results:
+        for (int i = 0; i < n; i++)
+          delete[] x1[i];
+        for (int i = 0; i < n; i++)
+          delete[] x2[i];
       }
     } catch (GRBException &e) {
       cout << "Error number: " << e.getErrorCode() << endl;
@@ -314,7 +324,7 @@ void subgradient_method(int n, int k) {
       }
 
     // Set callback function:
-    SubTourElim cb = SubTourElim(X1, X2, d, n, k);
+    SubTourElim cb = SubTourElim(X1, X2, n, k);
     model.setCallback(&cb);
 
     // Solve first with k = |V| = n to get an UB: ------------------------------
