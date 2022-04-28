@@ -155,12 +155,14 @@ protected:
             lagrangian_heuristic(missing_k);
           double UB = 0;
           for (int i = 0; i < n; i++)
-            for (int j = 0; j < n; j++)
+            for (int j = i + 1; j < n; j++) {
               if (x1[i][j] > 0.5)
                 UB += X1[i][j].get(GRB_DoubleAttr_Obj);
-              else if (x2[i][j] > 0.5)
+              if (x2[i][j] > 0.5)
                 UB += X2[i][j].get(GRB_DoubleAttr_Obj);
-          cout << "New UB for the original model found: " << UB << "\n\n";
+            }
+          if (UB < best_UB)
+            cout << "New UB for the original model found: " << UB << "\n\n";
           best_UB = min(best_UB, UB);
         }
 
@@ -207,8 +209,10 @@ protected:
     for (int i = 0; i < n; i++)
       if (tour2[i] == u) // found an end point of uv
         u_l = tour2[mod(i - 1, n)], u_r = tour2[mod(i + 1, n)];
-      else if (tour2[i] == v)
+      else if (tour2[i] == v) {
         v_l = tour2[mod(i + 1, n)], v_r = tour2[mod(i - 1, n)];
+        break; // u < v
+      }
   }
 
   void lagrangian_heuristic(int &missing_k) {
@@ -220,20 +224,22 @@ protected:
           int delta, i_l, i_r, j_l, j_r;
           get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r);
           if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
-            missing_k -= delta; // increased the similarity by an edge pair flip
+            // Increase the similarity by an edge pair flip:
+            missing_k -= delta;
             flip(i, j, i_l, j_r);
             return;
-          } else if (delta >= 0)
-            u = i, v = j, s = i_l,
-            t = j_r; // found at least a similarity keeping edge pair
+          } else if (delta == 0)
+            // Found at least a similarity keeping edge pair:
+            u = i, v = j, s = i_l, t = j_r;
 
           if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
-            missing_k -= delta; // increased the similarity by an edge pair flip
+            // Increase the similarity by an edge pair flip:
+            missing_k -= delta;
             flip(i, j, i_r, j_l);
             return;
-          } else if (delta >= 0)
-            u = i, v = j, s = i_r,
-            t = j_l; // found at least a similarity keeping edge pair
+          } else if (delta == 0)
+            // Found at least a similarity keeping edge pair:
+            u = i, v = j, s = i_r, t = j_l;
         }
 
     // Will make a similarity increasing pair appear:
@@ -270,7 +276,7 @@ void subgradient_method(int n, int k) {
     d[i] = new GRBVar[n];
   }
 
-  double remaining_time = 1800;
+  double remaining_time = 1800; // 30 min
   try {
     // Create the gurobi model used to solve the LLBP relaxations: -------------
     auto *env = new GRBEnv();
@@ -304,6 +310,8 @@ void subgradient_method(int n, int k) {
     model.update(); // run update to use model inserted variables
 
     // Similarity constraint between tours (1st constraint):
+    // The first run will not dualize any constraint in order to stability a
+    // feasible UB.
     GRBLinExpr expr = 0;
     for (int i = 0; i < n; i++)
       for (int j = i + 1; j < n; j++)
@@ -364,6 +372,11 @@ void subgradient_method(int n, int k) {
       Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
       Z_UB = min(Z_UB, cb.best_UB);
 
+      if (Z_LB_k >= Z_UB) {
+        cout << "\nFound an optimal solution of cost = " << Z_UB << "\n\n";
+        break;
+      }
+
       // Compute the subgradients:
       for (int i = 0; i < n_duals; i++) {
         g_k[i] = k;
@@ -376,12 +389,8 @@ void subgradient_method(int n, int k) {
       // Update the lagrangian multipliers:
       auto alpha_k = pi_k * (Z_UB - Z_LB_k) / g_k_srq_sum;
       for (int i = 0; i < n_duals; i++)
-        lambda[i] = std::max(0.0, lambda[i] + alpha_k * g_k[i]);
+        lambda[i] = max(0.0, lambda[i] + alpha_k * g_k[i]);
 
-      if (Z_LB_k >= Z_UB) {
-        cout << "\nFound an optimal solution of cost = " << Z_UB << "\n\n";
-        break;
-      }
       pi_k *= 0.9; // decrease the pi value to guarantee convergence
       cout << "\niter = " << iter << "; lambda = " << lambda[0]
            << "; alpha = " << alpha_k << "; LB = " << Z_LB_k
