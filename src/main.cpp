@@ -84,7 +84,7 @@ public:
 
   SubTourElim(GRBVar **xX1, GRBVar **xX2, GRBVar **xd, int xn, int xk)
       : n(xn), k(xk), X1(xX1), X2(xX2), D(xd) {
-    x1 = new double *[n], x2 = new double *[n];
+    x1 = new double *[n], x2 = new double *[n], d = new double *[n];
     tour1 = new int[n], tour2 = new int[n];
   }
 
@@ -133,11 +133,11 @@ protected:
         eliminated |= eliminate_min_sub_tour(X2, x2, tour2);
 
         if (!eliminated) { // found an upper bound to the IP model
-          int num_shared = similarity();
-          if (num_shared < k) // does this solution violates the similarity?
-            // Fix the similarity violation and generates a new valid solution
-            // to the non-relaxed IP model:
-            lagrangian_heuristic(k - num_shared);
+          // Fix the similarity violation and generates a new valid solution
+          // to the non-relaxed IP model:
+          int missing_k = k - similarity();
+          while (missing_k > 0)
+            lagrangian_heuristic(missing_k);
         }
       }
     } catch (GRBException &e) {
@@ -152,54 +152,67 @@ protected:
     return 1 + (x1[s][t] > 0.5) - (x1[u][s] > 0.5) - (x1[v][t] > 0.5);
   }
 
-  void flip(int u, int u_pos, int v, int v_pos, int s, int t) const {
+  void flip(int u, int u_pos, int v, int v_pos, int s, int s_pos, int t,
+            int t_pos) const {
     // Flip the edges:
-    x1[u][v] = x1[s][t] = 1;
-    x1[u][s] = x1[v][t] = 0;
-    // Reorder the tour:
-    int lower = min(u_pos, v_pos), upper = max(u_pos, v_pos), aux;
+    x2[u][v] = x2[s][t] = 1;
+    x2[u][s] = x2[v][t] = 0;
+    // Reorder a subsequence of the tour to make the flip valid:
+    int lower = max(u_pos, s_pos), upper = min(v_pos, t_pos), aux;
+    if (lower >= upper) { // if the subsequence goes around the array
+      aux = upper;
+      upper = lower - 1;
+      lower = aux + 1;
+    }
     for (; lower < upper; lower++, upper--)
       aux = tour2[lower], tour2[lower] = tour2[upper], tour2[upper] = aux;
   }
 
   inline void get_endpoint_neighbors(int u, int v, int &u_l, int &u_r, int &v_l,
-                                     int &v_r, int &u_pos, int &v_pos) const {
+                                     int &v_r, int &u_pos, int &v_pos,
+                                     int &u_l_pos, int &u_r_pos, int &v_l_pos,
+                                     int &v_r_pos) const {
     for (int i = 0; i < n; i++)
       if (tour2[i] == u) { // found an end point of uv
-        u_l = tour2[(i - 1) % n], u_r = tour2[(i + 1) % n];
+        u_l = tour2[u_l_pos = (i - 1) % n], u_r = tour2[u_r_pos = (i + 1) % n];
         u_pos = i;
       } else if (tour2[i] == v) {
-        v_l = tour2[(i + 1) % n], v_r = tour2[(i - 1) % n];
+        v_l = tour2[v_l_pos = (i + 1) % n], v_r = tour2[v_r_pos = (i - 1) % n];
         v_pos = i;
       }
   }
 
-  void lagrangian_heuristic(int missing_k) {
-    int u, u_pos, v, v_pos, s, t;
-    while (missing_k > 0) {
-      for (int i = 0; i < n; i++)
-        for (int j = i + 1; j < n; j++)
-          if (x1[i][j] > 0.5 && x2[i][j] <= 0.5) {
-            int delta, i_pos, j_pos, i_l, i_r, j_l, j_r;
-            get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r, i_pos, j_pos);
-            if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
-              flip(i, i_pos, j, j_pos, i_l, j_r);
-              missing_k--; // increased the similarity by an edge pair flip
-            } else if (delta >= 0)
-              u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_l,
-              t = j_r; // found at least a similarity keeping edge pair
+  void lagrangian_heuristic(int &missing_k) {
+    int u, u_pos, v, v_pos, s, s_pos, t, t_pos;
+    for (int i = 0; i < n; i++)
+      for (int j = i + 1; j < n; j++)
+        // ij is a candidate to be added to tour 2:
+        if (x1[i][j] > 0.5 && x2[i][j] <= 0.5) {
+          int delta, i_l, i_r, j_l, j_r;
+          int i_pos, j_pos, i_l_pos, i_r_pos, j_l_pos, j_r_pos;
+          get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r, i_pos, j_pos,
+                                 i_l_pos, i_r_pos, j_l_pos, j_r_pos);
+          if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
+            flip(i, i_pos, j, j_pos, i_l, i_l_pos, j_r, j_r_pos);
+            missing_k -= delta; // increased the similarity by an edge pair flip
+            return;
+          } else if (delta >= 0)
+            u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_l,
+            s_pos = i_l_pos, t = j_r,
+            t_pos = j_r_pos; // found at least a similarity keeping edge pair
 
-            if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
-              flip(i, i_pos, j, j_pos, i_r, j_l);
-              missing_k--; // increased the similarity by an edge pair flip
-            } else if (delta >= 0)
-              u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_r,
-              t = j_l; // found at least a similarity keeping edge pair
-          }
+          if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
+            flip(i, i_pos, j, j_pos, i_r, i_r_pos, j_l, j_l_pos);
+            missing_k -= delta; // increased the similarity by an edge pair flip
+            return;
+          } else if (delta >= 0)
+            u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_r,
+            s_pos = i_r_pos, t = j_l,
+            t_pos = j_l_pos; // found at least a similarity keeping edge pair
+        }
 
-      // Will make a similarity increasing pair appear:
-      flip(u, u_pos, v, v_pos, s, t);
-    }
+    // Will make a similarity increasing pair appear:
+    flip(u, u_pos, v, v_pos, s, s_pos, t, t_pos);
   }
 };
 
