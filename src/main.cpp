@@ -88,11 +88,11 @@ class SubTourElim : public GRBCallback {
 public:
   int n, k;
   GRBVar **X1, **X2;
-  double **x1, **x2;
+  double **x1, **x2, best_UB;
   int *tour1, *tour2;
 
   SubTourElim(GRBVar **xX1, GRBVar **xX2, int xn, int xk)
-      : n(xn), k(xk), X1(xX1), X2(xX2) {
+      : n(xn), k(xk), X1(xX1), X2(xX2), best_UB(INFINITY) {
     x1 = new double *[n], x2 = new double *[n];
     tour1 = new int[n], tour2 = new int[n];
   }
@@ -153,6 +153,15 @@ protected:
           int missing_k = k - similarity();
           while (missing_k > 0)
             lagrangian_heuristic(missing_k);
+          double UB = 0;
+          for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+              if (x1[i][j] > 0.5)
+                UB += X1[i][j].get(GRB_DoubleAttr_Obj);
+              else if (x2[i][j] > 0.5)
+                UB += X2[i][j].get(GRB_DoubleAttr_Obj);
+          cout << "New UB for the original model found: " << UB << "\n\n";
+          best_UB = min(best_UB, UB);
         }
 
         // Cleanup the results:
@@ -211,16 +220,16 @@ protected:
           int delta, i_l, i_r, j_l, j_r;
           get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r);
           if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
-            flip(i, j, i_l, j_r);
             missing_k -= delta; // increased the similarity by an edge pair flip
+            flip(i, j, i_l, j_r);
             return;
           } else if (delta >= 0)
             u = i, v = j, s = i_l,
             t = j_r; // found at least a similarity keeping edge pair
 
           if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
-            flip(i, j, i_r, j_l);
             missing_k -= delta; // increased the similarity by an edge pair flip
+            flip(i, j, i_r, j_l);
             return;
           } else if (delta >= 0)
             u = i, v = j, s = i_r,
@@ -353,6 +362,7 @@ void subgradient_method(int n, int k) {
       model.optimize(); // solve the LLBP
       // lambda[0] * k is a constant for fixed lambda:
       Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
+      Z_UB = min(Z_UB, cb.best_UB);
 
       // Compute the subgradients:
       for (int i = 0; i < n_duals; i++) {
@@ -368,10 +378,15 @@ void subgradient_method(int n, int k) {
       for (int i = 0; i < n_duals; i++)
         lambda[i] = std::max(0.0, lambda[i] + alpha_k * g_k[i]);
 
+      if (Z_LB_k >= Z_UB) {
+        cout << "\nFound an optimal solution of cost = " << Z_UB << "\n\n";
+        break;
+      }
       pi_k *= 0.9; // decrease the pi value to guarantee convergence
       cout << "\niter = " << iter << "; lambda = " << lambda[0]
            << "; alpha = " << alpha_k << "; LB = " << Z_LB_k
-           << "; UB = " << Z_UB << "\n\n";
+           << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
+           << "%\n\n";
       if (pi_k < eps)
         break;
     }
