@@ -24,3 +24,7 @@ link_directories(${CMAKE_SOURCE_DIR}/lemon/lemon-1.3.1/lib)
 add_executable(mc859 src/main.cpp)
 target_link_libraries(mc859 m)
 target_link_libraries(mc859 m gurobi_c++ gurobi95)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_target_properties(mc859 PROPERTIES COMPILE_FLAGS -DDEBUG_MODE)
+endif()

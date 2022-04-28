@@ -118,7 +118,7 @@ protected:
     return num_shared;
   }
 
-  void print_edges(double **x) {
+  void print_edges(double **x) const {
     for (int i = 0; i < n; i++) {
       for (int j = 0; j < n; j++)
         cout << (x[i][j] > 0.5);
@@ -133,8 +133,10 @@ protected:
         // Found an integer feasible solution - does it visit every node?
         bool eliminated = eliminate_min_sub_tour(X1, x1, tour1);
         eliminated |= eliminate_min_sub_tour(X2, x2, tour2);
-        // print_edges(x1);
-        // print_edges(x2);
+#ifdef DEBUG_MODE
+        print_edges(x1);
+        print_edges(x2);
+#endif
 
         if (!eliminated) { // found an upper bound to the IP model
           // Fix the similarity violation and generates a new valid solution
