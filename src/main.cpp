@@ -271,7 +271,7 @@ void subgradient_method(int n, int k) {
   // The similarity constraint will be dualized: -------------------------------
   int n_duals = 1;
   auto lambda = new double[n_duals], g_k = new double[n_duals];
-  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB, eps = 1E-2;
+  double pi_k = 2.0, g_k_srq_sum = 0, Z_LB_k, Z_UB, eps = 1E-2, min_delta;
 
   // Initialize the Lagrangian multipliers lambda:
   for (int i = 0; i < n_duals; i++)
@@ -305,12 +305,20 @@ void subgradient_method(int n, int k) {
     model.set(GRB_IntParam_Presolve, GRB_PRESOLVE_AGGRESSIVE);
 
     // Create binary decision variables:
+    min_delta = INFINITY; // minimum change in the objective (used for
+                          // convergence check)
     for (int i = 0; i < n; i++)
       for (int j = 0; j <= i; j++) {
-        X1[i][j] = model.addVar(0.0, 1.0, distance(x1, y1, i, j), GRB_BINARY,
+        double dist = distance(x1, y1, i, j);
+        if (dist > 0)
+          min_delta = min(min_delta, dist);
+        X1[i][j] = model.addVar(0.0, 1.0, dist, GRB_BINARY,
                                 "x1_" + itos(i) + "_" + itos(j));
         X1[j][i] = X1[i][j];
-        X2[i][j] = model.addVar(0.0, 1.0, distance(x2, y2, i, j), GRB_BINARY,
+        dist = distance(x2, y2, i, j);
+        if (dist > 0)
+          min_delta = min(min_delta, dist);
+        X2[i][j] = model.addVar(0.0, 1.0, dist, GRB_BINARY,
                                 "x2_" + itos(i) + "_" + itos(j));
         X2[j][i] = X2[i][j];
         d[i][j] = model.addVar(0.0, 1.0, 0, GRB_BINARY,
@@ -385,7 +393,7 @@ void subgradient_method(int n, int k) {
       Z_LB_k = model.getObjective().getValue() + lambda[0] * k;
       Z_UB = min(Z_UB, cb.best_UB);
 
-      if (Z_LB_k >= Z_UB) {
+      if (abs(Z_LB_k - Z_UB) < min_delta) {
         cout << "\n→ Found an optimal solution of cost = " << Z_UB << "\n\n";
         break;
       }
@@ -411,6 +419,29 @@ void subgradient_method(int n, int k) {
            << "%\n\n";
       if (pi_k < eps)
         break;
+    }
+
+    // Solve the full model to optimality if needed:
+    remaining_time -= model.get(GRB_DoubleAttr_Runtime);
+    if (abs(Z_LB_k - Z_UB) > min_delta && remaining_time > 0) {
+      // Prepare the full model: -----------------------------------------------
+      for (int i = 0; i < n; i++)
+        for (int j = 0; j <= i; j++)
+          d[i][j].set(GRB_DoubleAttr_Obj, 0);
+      GRBLinExpr expr = 0;
+      for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+          expr += d[i][j];
+      model.addConstr(expr >= k, "similarity");
+      env->set(GRB_DoubleParam_TimeLimit, remaining_time);
+      model.optimize(); // solve the full model
+
+      Z_UB = min(Z_UB, model.getObjective().getValue());
+      if (abs(Z_LB_k - Z_UB) < min_delta)
+        cout << "\n→ Found an optimal solution of cost = " << Z_UB << "\n\n";
+      else
+        cout << "\n→ LB = " << Z_LB_k << "; UB = " << Z_UB
+             << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100 << "%\n\n";
     }
   } catch (GRBException &e) {
     cout << "Error number: " << e.getErrorCode() << endl;
@@ -438,56 +469,5 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   subgradient_method(atoi(argv[1]), atoi(argv[2]));
-
-  /*try {
-    // Extract solution:
-    if (model.get(GRB_IntAttr_SolCount) > 0) {
-      auto sol1 = new double *[n], sol2 = new double *[n];
-      for (int i = 0; i < n; i++) {
-        sol1[i] = model.get(GRB_DoubleAttr_X, X1[i], n);
-        sol2[i] = model.get(GRB_DoubleAttr_X, X2[i], n);
-      }
-
-      int *tour1 = new int[n], *tour2 = new int[n];
-      int len1, len2;
-
-      find_subtour(n, sol1, &len1, tour1);
-      find_subtour(n, sol2, &len2, tour2);
-      assert(len1 == n);
-      assert(len2 == n);
-
-      cout << "Tour 1: ";
-      for (int i = 0; i < n; i++)
-        cout << tour1[i] << " ";
-      cout << endl;
-
-      cout << "Tour 2: ";
-      for (int i = 0; i < n; i++)
-        cout << tour2[i] << " ";
-      cout << endl;
-
-      cout << "Shared edges:\n";
-      for (int i = 0; i < n; i++)
-        for (int j = i + 1; j < n; j++)
-          if (d[i][j].get(GRB_DoubleAttr_X) > 0.5)
-            cout << "(" << i << ", " << j << ") ";
-      cout << endl;
-
-      for (int i = 0; i < n; i++) {
-        delete[] sol1[i];
-        delete[] sol2[i];
-      }
-      delete[] sol1;
-      delete[] sol2;
-      delete[] tour1;
-      delete[] tour2;
-    }
-  } catch (GRBException &e) {
-    cout << "Error number: " << e.getErrorCode() << endl;
-    cout << e.getMessage() << endl;
-  } catch (...) {
-    cout << "Error during optimization" << endl;
-  }*/
-
   return 0;
 }
