@@ -25,6 +25,15 @@ inline double distance(const double *x, const double *y, int i, int j) {
   return ceil(sqrt(dx * dx + dy * dy));
 }
 
+inline int mod(int a, int b) {
+  if (b < 0)
+    return -mod(-a, -b);
+  int ret = a % b;
+  if (ret < 0)
+    ret += b;
+  return ret;
+}
+
 // Given an integer-feasible solution 'sol', find the smallest
 // sub-tour. Result is returned in 'tour', and length is
 // returned in 'tour_len'.
@@ -164,67 +173,62 @@ protected:
     return 1 + (x1[s][t] > 0.5) - (x1[u][s] > 0.5) - (x1[v][t] > 0.5);
   }
 
-  void flip(int u, int u_pos, int v, int v_pos, int s, int s_pos, int t,
-            int t_pos) const {
+  void flip(int u, int v, int s, int t) const {
     // Flip the edges:
-    x2[u][v] = x2[s][t] = 1;
-    x2[u][s] = x2[v][t] = 0;
+    x2[u][v] = x2[v][u] = x2[s][t] = x2[t][s] = 1;
+    x2[u][s] = x2[s][u] = x2[v][t] = x2[t][v] = 0;
     // Reorder a subsequence of the tour to make the flip valid:
-    int lower = max(u_pos, s_pos), upper = min(v_pos, t_pos), aux;
-    if (lower >= upper) { // if the subsequence goes around the array
-      aux = upper;
-      upper = lower - 1;
-      lower = aux + 1;
-    }
-    for (; lower < upper; lower++, upper--)
-      aux = tour2[lower], tour2[lower] = tour2[upper], tour2[upper] = aux;
+    bool *seen = new bool[n];
+    seen[0] = true;
+    for (int i = 1; i < n; i++)
+      seen[i] = false;
+    tour2[0] = 0;
+    for (int i = 0; i < n - 1; i++)
+      for (int j = 0; j < n; j++)
+        if (x2[tour2[i]][j] > 0.5 && !seen[j]) { // the next node is j
+          tour2[i + 1] = j;
+          seen[j] = true;
+          break;
+        }
+    delete[] seen;
   }
 
   inline void get_endpoint_neighbors(int u, int v, int &u_l, int &u_r, int &v_l,
-                                     int &v_r, int &u_pos, int &v_pos,
-                                     int &u_l_pos, int &u_r_pos, int &v_l_pos,
-                                     int &v_r_pos) const {
+                                     int &v_r) const {
     for (int i = 0; i < n; i++)
-      if (tour2[i] == u) { // found an end point of uv
-        u_l = tour2[u_l_pos = (i - 1) % n], u_r = tour2[u_r_pos = (i + 1) % n];
-        u_pos = i;
-      } else if (tour2[i] == v) {
-        v_l = tour2[v_l_pos = (i + 1) % n], v_r = tour2[v_r_pos = (i - 1) % n];
-        v_pos = i;
-      }
+      if (tour2[i] == u) // found an end point of uv
+        u_l = tour2[mod(i - 1, n)], u_r = tour2[mod(i + 1, n)];
+      else if (tour2[i] == v)
+        v_l = tour2[mod(i + 1, n)], v_r = tour2[mod(i - 1, n)];
   }
 
   void lagrangian_heuristic(int &missing_k) {
-    int u, u_pos, v, v_pos, s, s_pos, t, t_pos;
+    int u, v, s, t;
     for (int i = 0; i < n; i++)
       for (int j = i + 1; j < n; j++)
         // ij is a candidate to be added to tour 2:
         if (x1[i][j] > 0.5 && x2[i][j] <= 0.5) {
           int delta, i_l, i_r, j_l, j_r;
-          int i_pos, j_pos, i_l_pos, i_r_pos, j_l_pos, j_r_pos;
-          get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r, i_pos, j_pos,
-                                 i_l_pos, i_r_pos, j_l_pos, j_r_pos);
+          get_endpoint_neighbors(i, j, i_l, i_r, j_l, j_r);
           if ((delta = similarity_delta(i, j, i_l, j_r)) > 0) {
-            flip(i, i_pos, j, j_pos, i_l, i_l_pos, j_r, j_r_pos);
+            flip(i, j, i_l, j_r);
             missing_k -= delta; // increased the similarity by an edge pair flip
             return;
           } else if (delta >= 0)
-            u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_l,
-            s_pos = i_l_pos, t = j_r,
-            t_pos = j_r_pos; // found at least a similarity keeping edge pair
+            u = i, v = j, s = i_l,
+            t = j_r; // found at least a similarity keeping edge pair
 
           if ((delta = similarity_delta(i, j, i_r, j_l)) > 0) {
-            flip(i, i_pos, j, j_pos, i_r, i_r_pos, j_l, j_l_pos);
+            flip(i, j, i_r, j_l);
             missing_k -= delta; // increased the similarity by an edge pair flip
             return;
           } else if (delta >= 0)
-            u = i, u_pos = i_pos, v = j, v_pos = j_pos, s = i_r,
-            s_pos = i_r_pos, t = j_l,
-            t_pos = j_l_pos; // found at least a similarity keeping edge pair
+            u = i, v = j, s = i_r,
+            t = j_l; // found at least a similarity keeping edge pair
         }
 
     // Will make a similarity increasing pair appear:
-    flip(u, u_pos, v, v_pos, s, s_pos, t, t_pos);
+    flip(u, v, s, t);
   }
 };
 
