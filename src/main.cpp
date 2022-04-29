@@ -333,11 +333,13 @@ void subgradient_method(int n, int k) {
     // Similarity constraint between tours (1st constraint):
     // The first run will not dualize any constraint in order to stability a
     // feasible UB.
-    GRBLinExpr expr = 0;
-    for (int i = 0; i < n; i++)
-      for (int j = i + 1; j < n; j++)
-        expr += d[i][j];
-    model.addConstr(expr == n, "similarity");
+    if (k != 0) { // if there is a similarity constraint
+      GRBLinExpr expr = 0;
+      for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+          expr += d[i][j];
+      model.addConstr(expr == n, "similarity");
+    }
 
     // Degree-2 constraints:
     for (int i = 0; i < n; i++) {
@@ -372,12 +374,15 @@ void subgradient_method(int n, int k) {
     model.setCallback(&cb);
 
     // Solve first with k = |V| = n to get an UB: ------------------------------
-    model.optimize();
-    Z_UB = min(Z_UB, model.getObjective().getValue());
-    model.remove(model.getConstrs()[0]); // the 1st constraint (similarity)
+    if (k != 0) { // if there is a similarity constraint
+      model.optimize();
+      Z_UB = min(Z_UB, model.getObjective().getValue());
+      model.remove(model.getConstrs()[0]); // the 1st constraint (similarity)
+    }
     model.update();
 
-    for (int iter = 0; iter < 1000; iter++) {
+    int iter;
+    for (iter = 0; iter < 1000; iter++) {
       // The -lambda[0] obj is because of the dualized similarity constraint:
       for (int i = 0; i < n; i++)
         for (int j = 0; j <= i; j++)
@@ -413,13 +418,17 @@ void subgradient_method(int n, int k) {
         lambda[i] = max(0.0, lambda[i] + alpha_k * g_k[i]);
 
       pi_k *= 0.9; // decrease the pi value to guarantee convergence
+      if (pi_k < eps)
+        break;
       cout << "\n→ iter = " << iter + 1 << "; lambda = " << lambda[0]
            << "; alpha = " << alpha_k << "; LB = " << Z_LB_k
            << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
            << "%\n\n";
-      if (pi_k < eps)
-        break;
     }
+    cout << "\n→ Finished after " << iter
+         << " iterations; lambda = " << lambda[0] << "; LB = " << Z_LB_k
+         << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
+         << "%\n";
 
     // Solve the full model to optimality if needed:
     remaining_time -= model.get(GRB_DoubleAttr_Runtime);
