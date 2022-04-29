@@ -330,17 +330,6 @@ void subgradient_method(int n, int k) {
     Z_UB = starting_UB(X1, X2, n);
     env->set(GRB_DoubleParam_Cutoff, Z_UB); // set the know UB
 
-    // Similarity constraint between tours (1st constraint):
-    // The first run will not dualize any constraint in order to stability a
-    // feasible UB.
-    if (k != 0) { // if there is a similarity constraint
-      GRBLinExpr expr = 0;
-      for (int i = 0; i < n; i++)
-        for (int j = i + 1; j < n; j++)
-          expr += d[i][j];
-      model.addConstr(expr == n, "similarity");
-    }
-
     // Degree-2 constraints:
     for (int i = 0; i < n; i++) {
       GRBLinExpr expr1 = 0, expr2 = 0;
@@ -372,14 +361,6 @@ void subgradient_method(int n, int k) {
     // Set callback function:
     SubTourElim cb = SubTourElim(X1, X2, n, k);
     model.setCallback(&cb);
-
-    // Solve first with k = |V| = n to get an UB: ------------------------------
-    if (k != 0) { // if there is a similarity constraint
-      model.optimize();
-      Z_UB = min(Z_UB, model.getObjective().getValue());
-      model.remove(model.getConstrs()[0]); // the 1st constraint (similarity)
-    }
-    model.update();
 
     int iter;
     for (iter = 0; iter < 1000; iter++) {
@@ -425,7 +406,7 @@ void subgradient_method(int n, int k) {
            << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
            << "%\n\n";
     }
-    cout << "\n→ Finished after " << iter
+    cout << "\n→ Finished after " << iter + 1
          << " iterations; lambda = " << lambda[0] << "; LB = " << Z_LB_k
          << "; UB = " << Z_UB << "; GAP = " << (Z_UB - Z_LB_k) / Z_UB * 100
          << "%\n";
@@ -443,6 +424,7 @@ void subgradient_method(int n, int k) {
           expr += d[i][j];
       model.addConstr(expr >= k, "similarity");
       env->set(GRB_DoubleParam_TimeLimit, remaining_time);
+      env->set(GRB_DoubleParam_Cutoff, Z_UB); // set the know UB
       model.optimize(); // solve the full model
 
       Z_UB = min(Z_UB, model.getObjective().getValue());
