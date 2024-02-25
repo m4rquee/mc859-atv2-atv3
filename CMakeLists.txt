@@ -23,7 +23,7 @@ link_directories(${CMAKE_SOURCE_DIR}/lemon/lemon-1.3.1/lib)
 # Target executable and linking
 add_executable(mc859 src/main.cpp)
 target_link_libraries(mc859 m)
-target_link_libraries(mc859 m gurobi_c++ gurobi95)
+target_link_libraries(mc859 m gurobi_c++ gurobi110)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     message("Running in debug mode")
